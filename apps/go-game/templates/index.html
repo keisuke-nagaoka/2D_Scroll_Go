@@ -2,11 +2,35 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <title>{{.Title}}</title>
     <link rel="stylesheet" href="{{.BasePath}}/static/style.css">
 </head>
 <body>
-    <h1>{{.Title}}</h1>
-    <p>Go言語で構築されたアプリです。</p>
+    <script src="{{.BasePath}}/static/wasm_exec.js"></script>
+    <script>
+        const go = new Go();
+        const wasmURL = "{{.BasePath}}/static/game.wasm";
+
+        function run(instance) {
+            go.run(instance);
+        }
+
+        if (WebAssembly.instantiateStreaming) {
+            WebAssembly.instantiateStreaming(fetch(wasmURL), go.importObject)
+                .then(result => run(result.instance))
+                .catch(showError);
+        } else {
+            fetch(wasmURL)
+                .then(resp => resp.arrayBuffer())
+                .then(bytes => WebAssembly.instantiate(bytes, go.importObject))
+                .then(result => run(result.instance))
+                .catch(showError);
+        }
+
+        function showError(err) {
+            document.body.innerText = "ゲームの読み込みに失敗しました: " + err;
+        }
+    </script>
 </body>
 </html>

@@ -2,8 +2,14 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/main ."
+  cmd = """
+    (cp -n "$(go env GOROOT)/lib/wasm/wasm_exec.js" ./static/wasm_exec.js 2>/dev/null || \
+     cp -n "$(go env GOROOT)/misc/wasm/wasm_exec.js" ./static/wasm_exec.js 2>/dev/null || true) && \
+    GOOS=js GOARCH=wasm go build -o ./static/game.wasm ./wasm && \
+    go build -o ./tmp/main .
+  """
   bin = "./tmp/main"
+  entrypoint = "./tmp/main"
   include_ext = ["go", "html", "css", "js"]
   exclude_dir = ["tmp", "vendor"]
   delay = 1000

@@ -20,6 +20,10 @@ vendor/
 # air (live reload) build artifacts
 apps/**/tmp/
 
+# Ebitengine wasm build artifacts (rebuilt automatically by air, see .air.toml)
+apps/**/static/game.wasm
+apps/**/static/wasm_exec.js
+
 # Environment variables
 .env
 .env.*
