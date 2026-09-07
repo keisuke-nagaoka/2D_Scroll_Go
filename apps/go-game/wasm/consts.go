@@ -19,7 +19,7 @@ const (
 	enemyH     = 16
 	enemySpeed = 1.0
 
-	enemyJumpVelocity = -6.0
+	enemyJumpVelocity = jumpVelocity // same hop height as the player, so it's a real threat
 	enemyJumpInterval = 40  // frames between hops for jumper/landed-dropper enemies
 	enemyThrowInterval = 100 // frames between throws for thrower enemies
 

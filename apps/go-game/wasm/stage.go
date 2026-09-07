@@ -40,6 +40,7 @@ type stageSpec struct {
 	items       []point
 	oneUpItems  []point // subset of items that drop a 1UP instead of a coin
 	poisonItems []point // subset of items that drop a poison ("tabasco") instead of a coin
+	enemyItems  []point // subset of items that drop an enemy instead of a coin
 	walls       []point
 	enemies     []enemySpawn
 	pipes       []pipeSpec
@@ -62,6 +63,7 @@ type Stage struct {
 	pipes   []pipe
 	oneUps  []point
 	poisons []point
+	enemyItemAt []point
 }
 
 func tileToPixel(p point) struct{ x, y float64 } {
@@ -111,10 +113,11 @@ func buildStage(spec stageSpec) *Stage {
 	}
 
 	st := &Stage{
-		tiles:      tiles,
-		widthTiles: spec.widthTiles,
-		oneUps:     spec.oneUpItems,
-		poisons:    spec.poisonItems,
+		tiles:       tiles,
+		widthTiles:  spec.widthTiles,
+		oneUps:      spec.oneUpItems,
+		poisons:     spec.poisonItems,
+		enemyItemAt: spec.enemyItems,
 	}
 	st.playerStart = tileToPixel(spec.playerStart)
 	for _, ps := range spec.pipes {
@@ -186,6 +189,15 @@ func (s *Stage) isPoison(tx, ty int) bool {
 	return false
 }
 
+func (s *Stage) isEnemyItem(tx, ty int) bool {
+	for _, p := range s.enemyItemAt {
+		if p.x == tx && p.y == ty {
+			return true
+		}
+	}
+	return false
+}
+
 // stageBuilder assembles a stageSpec out of fixed-width chunks so features
 // never overlap: each chunk owns an exclusive 10-tile slice of the stage,
 // and any pit/enemy/block within it is centered with ground to spare on
@@ -198,6 +210,7 @@ type stageBuilder struct {
 	items       []point
 	oneUpItems  []point
 	poisonItems []point
+	enemyItems  []point
 	walls       []point
 	enemies     []enemySpawn
 	col         int
@@ -220,18 +233,31 @@ const (
 	itemCoin itemKind = iota
 	itemOneUp
 	itemPoison
+	itemEnemy
 )
 
 func (b *stageBuilder) bricksAndItem(kind itemKind) {
 	base := b.col + 2
-	b.bricks = append(b.bricks, point{base, 6}, point{base + 1, 6}, point{base + 2, 6})
-	item := point{base + 3, 6}
+	b.bricks = append(b.bricks, point{base, 6}, point{base + 1, 6}, point{base + 2, 6}, point{base + 3, 6})
+	item := point{base + 4, 6}
 	b.items = append(b.items, item)
 	switch kind {
 	case itemOneUp:
 		b.oneUpItems = append(b.oneUpItems, item)
 	case itemPoison:
 		b.poisonItems = append(b.poisonItems, item)
+	case itemEnemy:
+		b.enemyItems = append(b.enemyItems, item)
+	}
+	b.col += chunkWidth
+}
+
+// brickRow adds a row of purely destructible bricks (no item block), just
+// to give the player more blocks to smash.
+func (b *stageBuilder) brickRow(count int) {
+	base := b.col + (chunkWidth-count)/2
+	for i := 0; i < count; i++ {
+		b.bricks = append(b.bricks, point{base + i, 6})
 	}
 	b.col += chunkWidth
 }
@@ -285,9 +311,13 @@ func generateStage(idx int) stageSpec {
 	if poisonChunk == oneUpChunk {
 		poisonChunk++
 	}
+	enemyItemChunk := (numChunks * 3) / 4
+	for enemyItemChunk == oneUpChunk || enemyItemChunk == poisonChunk {
+		enemyItemChunk++
+	}
 	kind := enemyKindForStage(idx)
 
-	kinds := []string{"plain", "plain", "bricks", "platform"}
+	kinds := []string{"plain", "bricks", "bricks", "brickrow", "platform"}
 	for e := 0; e <= idx/3; e++ {
 		kinds = append(kinds, "enemy")
 	}
@@ -303,12 +333,17 @@ func generateStage(idx int) stageSpec {
 		case i == poisonChunk:
 			b.bricksAndItem(itemPoison)
 			continue
+		case i == enemyItemChunk:
+			b.bricksAndItem(itemEnemy)
+			continue
 		}
 		switch kinds[rng.Intn(len(kinds))] {
 		case "plain":
 			b.plain()
 		case "bricks":
 			b.bricksAndItem(itemCoin)
+		case "brickrow":
+			b.brickRow(5)
 		case "enemy":
 			b.enemy(kind)
 		case "platform":
@@ -335,6 +370,7 @@ func generateStage(idx int) stageSpec {
 		items:       b.items,
 		oneUpItems:  b.oneUpItems,
 		poisonItems: b.poisonItems,
+		enemyItems:  b.enemyItems,
 		walls:       b.walls,
 		enemies:     b.enemies,
 		pipes:       []pipeSpec{{x: pipeX, width: 2, height: 2, nextStage: (idx + 1) % numStages}},

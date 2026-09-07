@@ -263,6 +263,8 @@ func (g *Game) onBlockHit(tx, ty int) {
 			g.dropItems = append(g.dropItems, newDropItem(tx, ty, dropOneUp))
 		case g.stage.isPoison(tx, ty):
 			g.dropItems = append(g.dropItems, newDropItem(tx, ty, dropPoison))
+		case g.stage.isEnemyItem(tx, ty):
+			g.enemies = append(g.enemies, newEnemy(float64(tx*tileSize), float64(ty*tileSize), enemyKindForStage(g.stageIdx)))
 		default:
 			g.score += 100
 			g.coinPops = append(g.coinPops, newCoinPop(tx, ty))
