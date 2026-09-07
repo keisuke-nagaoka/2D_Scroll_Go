@@ -28,4 +28,7 @@ const (
 
 	numStages    = 10
 	stageBannerFrames = 90 // ~1.5s at 60fps
+
+	coyoteFrames      = 6
+	jumpBufferFrames  = 6
 )

@@ -115,19 +115,27 @@ func (g *Game) updatePlaying() {
 	if p.vy > maxFallSpeed {
 		p.vy = maxFallSpeed
 	}
-	if g.input.JumpPressed && p.onGround {
+
+	if g.input.JumpPressed {
+		p.jumpBufferTimer = jumpBufferFrames
+	} else if p.jumpBufferTimer > 0 {
+		p.jumpBufferTimer--
+	}
+	if p.jumpBufferTimer > 0 && p.coyoteTimer > 0 {
 		p.vy = jumpVelocity
 		p.onGround = false
+		p.jumpBufferTimer = 0
+		p.coyoteTimer = 0
 	}
 
 	p.moveAndCollideX(g.stage)
 	p.onGround = false
 	p.moveAndCollideY(g.stage, g.onBlockHit)
 
-	if p.vx != 0 && p.onGround {
-		p.walkPhase += 0.35
-	} else if p.onGround {
-		p.walkPhase = 0
+	if p.onGround {
+		p.coyoteTimer = coyoteFrames
+	} else if p.coyoteTimer > 0 {
+		p.coyoteTimer--
 	}
 
 	if p.y > float64(heightTiles*tileSize) {
@@ -293,15 +301,13 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 		x := float32(e.x) - float32(g.cameraX)
 		y := float32(e.y)
-		vx, vy, vw, vh := figureVisualBox(x, y, enemyW, enemyH)
-		drawStickFigure(screen, vx, vy, vw, vh, e.vx > 0, true, e.grounded, e.walkPhase, color.RGBA{200, 40, 40, 255})
+		drawStickFigure(screen, x, y, enemyW, enemyH, e.vx > 0, color.RGBA{200, 40, 40, 255})
 	}
 
 	p := g.player
 	px := float32(p.x) - float32(g.cameraX)
 	py := float32(p.y)
-	pvx, pvy, pvw, pvh := figureVisualBox(px, py, playerW, playerH)
-	drawStickFigure(screen, pvx, pvy, pvw, pvh, p.facingRight, p.vx != 0, p.onGround, p.walkPhase, color.RGBA{30, 60, 200, 255})
+	drawStickFigure(screen, px, py, playerW, playerH, p.facingRight, color.RGBA{30, 60, 200, 255})
 
 	g.drawHUD(screen)
 	g.drawTouchControls(screen)
@@ -405,7 +411,7 @@ func (g *Game) drawGameOver(screen *ebiten.Image) {
 	vector.FillRect(screen, 0, 0, screenWidth, screenHeight, color.RGBA{10, 10, 20, 235}, false)
 
 	if g.lives > 0 {
-		drawStickFigure(screen, screenWidth/2-playerW*1.5/2, screenHeight/2-40, playerW*1.5, playerH*1.5, true, false, true, 0, color.White)
+		drawStickFigure(screen, screenWidth/2-playerW*1.5/2, screenHeight/2-40, playerW*1.5, playerH*1.5, true, color.White)
 
 		opts := &text.DrawOptions{}
 		opts.GeoM.Scale(2.5, 2.5)

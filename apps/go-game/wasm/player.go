@@ -8,7 +8,13 @@ type Player struct {
 	vx, vy      float64
 	onGround    bool
 	facingRight bool
-	walkPhase   float64
+
+	// coyoteTimer lets a jump still register for a few frames after walking
+	// off a ledge; jumpBufferTimer lets a jump pressed a few frames before
+	// landing still fire the instant the player touches ground. Both exist
+	// because requiring a frame-perfect press feels unresponsive.
+	coyoteTimer     int
+	jumpBufferTimer int
 }
 
 func (p *Player) Rect() rect {

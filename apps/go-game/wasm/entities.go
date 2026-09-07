@@ -39,7 +39,6 @@ func (e *Enemy) Update(st *Stage) {
 	}
 
 	e.grounded = false
-	e.walkPhase += 0.3
 
 	e.vy += gravity
 	if e.vy > maxFallSpeed {
