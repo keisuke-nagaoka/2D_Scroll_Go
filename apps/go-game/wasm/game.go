@@ -82,7 +82,7 @@ func (g *Game) die() {
 	p := g.player
 	g.particles = nil
 	for i := 0; i < particleCount; i++ {
-		g.particles = append(g.particles, newParticle(p.x+playerW/2, p.y+playerH/2))
+		g.particles = append(g.particles, newParticle(p.x+playerW/2, p.y+playerH/2, color.RGBA{255, 140, 20, 255}))
 	}
 }
 
@@ -167,7 +167,7 @@ func (g *Game) updatePlaying() {
 	}
 
 	for _, e := range g.enemies {
-		if proj := e.Update(g.stage); proj != nil {
+		if proj := e.Update(g.stage, p.x); proj != nil {
 			g.projectiles = append(g.projectiles, proj)
 		}
 		if e.alive && e.Rect().overlaps(p.Rect()) {
@@ -255,6 +255,7 @@ func (g *Game) onBlockHit(tx, ty int) {
 	switch g.stage.tileAt(tx, ty) {
 	case tileBrick:
 		g.stage.setTile(tx, ty, tileEmpty)
+		g.spawnBrickDebris(tx, ty)
 	case tileItem:
 		g.stage.setTile(tx, ty, tileUsed)
 		switch {
@@ -266,6 +267,16 @@ func (g *Game) onBlockHit(tx, ty int) {
 			g.score += 100
 			g.coinPops = append(g.coinPops, newCoinPop(tx, ty))
 		}
+	}
+}
+
+// spawnBrickDebris adds a small burst of brick-colored fragments at the
+// given tile, giving visual feedback that the block was destroyed.
+func (g *Game) spawnBrickDebris(tx, ty int) {
+	cx := float64(tx*tileSize) + tileSize/2
+	cy := float64(ty*tileSize) + tileSize/2
+	for i := 0; i < 8; i++ {
+		g.particles = append(g.particles, newParticle(cx, cy, color.RGBA{165, 92, 52, 255}))
 	}
 }
 
@@ -352,11 +363,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 		x := float32(e.x) - float32(g.cameraX)
 		y := float32(e.y)
-		clr := color.RGBA{200, 40, 40, 255}
-		if e.kind == enemyThrower {
-			clr = color.RGBA{160, 30, 140, 255}
-		}
-		drawStickFigure(screen, x, y, enemyW, enemyH, e.vx > 0, clr)
+		drawCharacter(screen, x, y, enemyW, enemyH, e.vx > 0, true)
 	}
 
 	for _, pr := range g.projectiles {
@@ -370,7 +377,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if g.state != stateGameOver {
 		px := float32(p.x) - float32(g.cameraX)
 		py := float32(p.y)
-		drawStickFigure(screen, px, py, playerW, playerH, p.facingRight, color.RGBA{30, 60, 200, 255})
+		drawCharacter(screen, px, py, playerW, playerH, p.facingRight, false)
 	}
 
 	g.drawHUD(screen)
@@ -384,12 +391,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.drawGameClear(screen)
 	}
 
-	// draw the death explosion above the game-over overlay so it stays visible
+	// draw explosion/debris particles above the overlay so they stay visible
 	for _, pt := range g.particles {
 		x := float32(pt.x) - float32(g.cameraX)
 		y := float32(pt.y)
-		alpha := uint8(255 * (1 - float32(pt.age)/float32(pt.life)))
-		vector.FillCircle(screen, x, y, 2, color.RGBA{255, 140, 20, alpha}, true)
+		alpha := float32(1 - float32(pt.age)/float32(pt.life))
+		r, gg, b, _ := pt.clr.RGBA()
+		clr := color.RGBA{uint8(r >> 8), uint8(gg >> 8), uint8(b >> 8), uint8(255 * alpha)}
+		vector.FillCircle(screen, x, y, 2, clr, true)
 	}
 }
 
@@ -495,7 +504,7 @@ func (g *Game) drawGameOver(screen *ebiten.Image) {
 	vector.FillRect(screen, 0, 0, screenWidth, screenHeight, color.RGBA{10, 10, 20, 235}, false)
 
 	if g.lives > 0 {
-		drawStickFigure(screen, screenWidth/2-playerW*1.5/2, screenHeight/2-40, playerW*1.5, playerH*1.5, true, color.White)
+		drawCharacter(screen, screenWidth/2-playerW*1.5/2, screenHeight/2-40, playerW*1.5, playerH*1.5, true, false)
 
 		opts := &text.DrawOptions{}
 		opts.GeoM.Scale(2.5, 2.5)

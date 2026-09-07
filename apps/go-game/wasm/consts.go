@@ -23,6 +23,11 @@ const (
 	enemyJumpInterval = 80  // frames between hops for jumper enemies
 	enemyThrowInterval = 100 // frames between throws for thrower enemies
 
+	// dropperTriggerRange is how close (in px) the player must be, horizontally,
+	// before a dormant enemyDropper starts falling, so the player actually
+	// sees it drop instead of finding it already landed.
+	dropperTriggerRange = 90
+
 	projectileW     = 8
 	projectileH     = 8
 	projectileSpeed = 1.6

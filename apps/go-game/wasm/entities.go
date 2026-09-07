@@ -1,6 +1,7 @@
 package main
 
 import (
+	"image/color"
 	"math"
 	"math/rand"
 )
@@ -44,6 +45,7 @@ type Enemy struct {
 	alive        bool
 	grounded     bool
 	hasLanded    bool
+	triggered    bool // enemyDropper: starts falling once the player gets close
 	jumpTimer    int
 	throwTimer   int
 }
@@ -77,10 +79,18 @@ func (e *Enemy) Rect() rect {
 }
 
 // Update advances the enemy by one tick and returns a newly-launched
-// projectile, if this tick's behavior fired one (nil otherwise).
-func (e *Enemy) Update(st *Stage) *Projectile {
+// projectile, if this tick's behavior fired one (nil otherwise). playerX is
+// used only by enemyDropper, to know when to start falling.
+func (e *Enemy) Update(st *Stage, playerX float64) *Projectile {
 	if !e.alive {
 		return nil
+	}
+
+	if e.kind == enemyDropper && !e.triggered {
+		if math.Abs(playerX-(e.x+enemyW/2)) > dropperTriggerRange {
+			return nil // stays put, off-screen, until the player gets close
+		}
+		e.triggered = true
 	}
 
 	e.grounded = false
@@ -205,14 +215,15 @@ func (pr *Projectile) Update(st *Stage) {
 	}
 }
 
-// Particle is a short-lived cosmetic speck used for the death explosion
-// effect; it has no gameplay effect.
+// Particle is a short-lived cosmetic speck used for the death explosion and
+// brick-break effects; it has no gameplay effect.
 type Particle struct {
 	x, y, vx, vy float64
 	age, life    int
+	clr          color.Color
 }
 
-func newParticle(x, y float64) *Particle {
+func newParticle(x, y float64, clr color.Color) *Particle {
 	angle := rand.Float64() * 2 * math.Pi
 	speed := 1.2 + rand.Float64()*2.4
 	return &Particle{
@@ -220,6 +231,7 @@ func newParticle(x, y float64) *Particle {
 		vx:   math.Cos(angle) * speed,
 		vy:   math.Sin(angle)*speed - 1.5,
 		life: 25 + rand.Intn(20),
+		clr:  clr,
 	}
 }
 

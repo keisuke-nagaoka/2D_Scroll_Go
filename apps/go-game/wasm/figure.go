@@ -7,37 +7,66 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
-// drawStickFigure renders a minimal, static stick figure (round head,
-// torso, arms, two legs - no walk animation) inside the given on-screen
-// box (x, y, w, h). Proportions are based on h (not w), since a humanoid
-// figure is much taller than it is wide; arms are allowed to reach out
-// past the box width since real arms are wider than a body's collision box.
-func drawStickFigure(screen *ebiten.Image, x, y, w, h float32, facingRight bool, clr color.Color) {
+// drawCharacter renders a chunky-limbed toon figure (round head, thick
+// tube-like arms/legs ending in round hands/feet) inside the given
+// on-screen box (x, y, w, h), static (no walk animation). angry selects
+// the enemy palette (red body, slit angry eyes); otherwise it's the player
+// palette (white body, red cap, blue feet, dot eyes).
+func drawCharacter(screen *ebiten.Image, x, y, w, h float32, facingRight, angry bool) {
 	cx := x + w/2
-	headR := h * 0.16
+	headR := h * 0.26
 	headCY := y + headR + 1
-	neckY := headCY + headR + 1
-	hipY := y + h*0.62
+	hipY := y + h*0.60
 	footY := y + h
-	shoulderY := neckY + (hipY-neckY)*0.25
+	shoulderY := headCY + headR*0.85
 
-	vector.FillCircle(screen, cx, headCY, headR, clr, true)
-
-	noseDir := float32(1)
-	if !facingRight {
-		noseDir = -1
+	bodyClr := color.RGBA{240, 240, 240, 255}
+	handClr := color.RGBA{255, 255, 255, 255}
+	footClr := color.RGBA{40, 110, 220, 255}
+	outline := color.RGBA{25, 25, 25, 255}
+	if angry {
+		bodyClr = color.RGBA{215, 30, 30, 255}
+		handClr = color.RGBA{190, 20, 20, 255}
+		footClr = color.RGBA{150, 15, 15, 255}
 	}
-	vector.StrokeLine(screen, cx, headCY, cx+noseDir*headR*1.3, headCY, 1.2, clr, true)
-	vector.StrokeLine(screen, cx, neckY, cx, hipY, 1.8, clr, true)
 
-	// arms: reach out to the sides and slightly down, well above the hip
-	// so they read as arms rather than a second pair of legs
-	const armReach = 0.9
-	armEndY := shoulderY + h*0.16
-	vector.StrokeLine(screen, cx, shoulderY, cx-w*armReach, armEndY, 1.6, clr, true)
-	vector.StrokeLine(screen, cx, shoulderY, cx+w*armReach, armEndY, 1.6, clr, true)
+	const limbW = 2.0
+	const handR = 1.8
+	const footR = 2.0
 
-	const stance = 0.20 // leg spacing, as a fraction of w
-	vector.StrokeLine(screen, cx, hipY, cx-w*stance, footY, 1.8, clr, true)
-	vector.StrokeLine(screen, cx, hipY, cx+w*stance, footY, 1.8, clr, true)
+	dir := float32(1)
+	if !facingRight {
+		dir = -1
+	}
+	lx, rx := cx-dir*w*0.22, cx+dir*w*0.42 // back/front foot, leaning into facing direction
+	feetY := footY - footR*0.5
+	vector.StrokeLine(screen, cx, hipY, lx, feetY, limbW, bodyClr, true)
+	vector.StrokeLine(screen, cx, hipY, rx, feetY, limbW, bodyClr, true)
+	vector.FillCircle(screen, lx, feetY, footR, footClr, true)
+	vector.FillCircle(screen, rx, feetY, footR, footClr, true)
+
+	vector.StrokeLine(screen, cx, shoulderY, cx, hipY, limbW+0.6, bodyClr, true)
+
+	handY := shoulderY + h*0.22
+	ax := w * 0.58
+	vector.StrokeLine(screen, cx, shoulderY, cx-ax, handY, limbW, bodyClr, true)
+	vector.StrokeLine(screen, cx, shoulderY, cx+ax, handY, limbW, bodyClr, true)
+	vector.FillCircle(screen, cx-ax, handY, handR, handClr, true)
+	vector.FillCircle(screen, cx+ax, handY, handR, handClr, true)
+
+	vector.FillCircle(screen, cx, headCY, headR, bodyClr, true)
+	vector.StrokeCircle(screen, cx, headCY, headR, 1, outline, true)
+
+	if !angry {
+		vector.FillRect(screen, cx-headR*0.9, headCY-headR*1.1, headR*1.8, headR*0.55, color.RGBA{210, 30, 30, 255}, true)
+	}
+
+	eyeOff := headR * 0.42
+	if angry {
+		vector.StrokeLine(screen, cx-eyeOff-1.2, headCY-1.2, cx-eyeOff+1.2, headCY+1.2, 1.1, outline, true)
+		vector.StrokeLine(screen, cx+eyeOff-1.2, headCY+1.2, cx+eyeOff+1.2, headCY-1.2, 1.1, outline, true)
+	} else {
+		vector.FillCircle(screen, cx-eyeOff, headCY, 1, outline, true)
+		vector.FillCircle(screen, cx+eyeOff, headCY, 1, outline, true)
+	}
 }
