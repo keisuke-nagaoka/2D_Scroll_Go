@@ -20,7 +20,7 @@ const (
 	enemySpeed = 1.0
 
 	enemyJumpVelocity = -6.0
-	enemyJumpInterval = 80  // frames between hops for jumper enemies
+	enemyJumpInterval = 40  // frames between hops for jumper/landed-dropper enemies
 	enemyThrowInterval = 100 // frames between throws for thrower enemies
 
 	// dropperTriggerRange is how close (in px) the player must be, horizontally,

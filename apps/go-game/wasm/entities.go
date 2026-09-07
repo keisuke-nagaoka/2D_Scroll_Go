@@ -154,15 +154,6 @@ func (e *Enemy) Update(st *Stage, playerX float64) *Projectile {
 			e.hasLanded = true
 			e.vx = -enemySpeed
 		}
-	case enemyJumper:
-		if e.grounded {
-			e.jumpTimer--
-			if e.jumpTimer <= 0 {
-				e.vy = enemyJumpVelocity
-				e.grounded = false
-				e.jumpTimer = enemyJumpInterval
-			}
-		}
 	case enemyThrower:
 		e.throwTimer--
 		if e.throwTimer <= 0 {
@@ -172,6 +163,16 @@ func (e *Enemy) Update(st *Stage, playerX float64) *Projectile {
 				dir = -1
 			}
 			spawned = newProjectile(e.x+enemyW/2, e.y+enemyH/2-projectileH/2, dir*projectileSpeed)
+		}
+	}
+
+	// jumpers hop as soon as they patrol; landed droppers pick up the same hop
+	if e.grounded && (e.kind == enemyJumper || (e.kind == enemyDropper && e.hasLanded)) {
+		e.jumpTimer--
+		if e.jumpTimer <= 0 {
+			e.vy = enemyJumpVelocity
+			e.grounded = false
+			e.jumpTimer = enemyJumpInterval
 		}
 	}
 	return spawned
