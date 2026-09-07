@@ -1,0 +1,35 @@
+services:
+  nginx:
+    image: nginx
+    container_name: go_nginx
+    ports:
+      - 9100:80
+      - 9543:443
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./docker/nginx/server.crt:/etc/nginx/ssl/server.crt
+      - ./docker/nginx/server.key:/etc/nginx/ssl/server.key
+    depends_on:
+      - go-game
+
+  go-game:
+    container_name: go-game
+    build:
+      context: ./docker/go
+    working_dir: /app
+    volumes:
+      - ./apps/go-game:/app
+    environment:
+      APP_BASE_PATH: /go-game
+
+  # 新しいアプリを追加する場合はここに1ブロック追加し、
+  # docker/nginx/default.conf にも対応するupstream/locationを追加する
+  # go-app2:
+  #   container_name: go-app2
+  #   build:
+  #     context: ./docker/go
+  #   working_dir: /app
+  #   volumes:
+  #     - ./apps/go-app2:/app
+  #   environment:
+  #     APP_BASE_PATH: /go-app2

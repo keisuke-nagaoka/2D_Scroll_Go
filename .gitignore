@@ -1,0 +1,30 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# air (live reload) build artifacts
+apps/**/tmp/
+
+# Environment variables
+.env
+.env.*
+
+# TLS certificates / private keys (do not commit secrets)
+docker/nginx/*.crt
+docker/nginx/*.key
+docker/nginx/*.pem
