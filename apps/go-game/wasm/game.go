@@ -17,6 +17,7 @@ type gameState int
 const (
 	statePlaying gameState = iota
 	stateGameOver
+	stateGameClear
 )
 
 // Game implements ebiten.Game and owns all mutable state for the running
@@ -27,8 +28,10 @@ type Game struct {
 	stage       *Stage
 	player      *Player
 	enemies     []*Enemy
+	projectiles []*Projectile
+	particles   []*Particle
 	coinPops    []*CoinPop
-	oneUps      []*OneUp
+	dropItems   []*DropItem
 	floatTexts  []*FloatText
 	input       *Input
 	cameraX     float64
@@ -59,20 +62,28 @@ func (g *Game) loadStage(idx int) {
 	g.player = &Player{x: g.stage.playerStart.x, y: g.stage.playerStart.y, facingRight: true}
 	g.enemies = nil
 	for _, sp := range g.stage.enemySpawns {
-		g.enemies = append(g.enemies, newEnemy(sp.x, sp.y))
+		g.enemies = append(g.enemies, newEnemy(sp.x, sp.y, sp.kind))
 	}
+	g.projectiles = nil
+	g.particles = nil
 	g.coinPops = nil
-	g.oneUps = nil
+	g.dropItems = nil
 	g.floatTexts = nil
 	g.state = statePlaying
 	g.stageBanner = stageBannerFrames
 }
 
-// die consumes one life and shows the game-over prompt. Continuing respawns
-// in the stage the player died in (see Update), not back at stage1.
+// die consumes one life, spawns a death explosion, and shows the game-over
+// prompt. Continuing respawns in the stage the player died in (see
+// Update), not back at stage1.
 func (g *Game) die() {
 	g.lives--
 	g.state = stateGameOver
+	p := g.player
+	g.particles = nil
+	for i := 0; i < particleCount; i++ {
+		g.particles = append(g.particles, newParticle(p.x+playerW/2, p.y+playerH/2))
+	}
 }
 
 func (g *Game) Update() error {
@@ -80,6 +91,12 @@ func (g *Game) Update() error {
 
 	if g.stageBanner > 0 {
 		g.stageBanner--
+	}
+
+	for i := len(g.particles) - 1; i >= 0; i-- {
+		if !g.particles[i].Update() {
+			g.particles = append(g.particles[:i], g.particles[i+1:]...)
+		}
 	}
 
 	switch g.state {
@@ -94,6 +111,12 @@ func (g *Game) Update() error {
 				g.score = 0
 				g.loadStage(0)
 			}
+		}
+	case stateGameClear:
+		if g.input.JumpPressed {
+			g.lives = startingLives
+			g.score = 0
+			g.loadStage(0)
 		}
 	}
 	return nil
@@ -144,8 +167,23 @@ func (g *Game) updatePlaying() {
 	}
 
 	for _, e := range g.enemies {
-		e.Update(g.stage)
+		if proj := e.Update(g.stage); proj != nil {
+			g.projectiles = append(g.projectiles, proj)
+		}
 		if e.alive && e.Rect().overlaps(p.Rect()) {
+			g.die()
+			return
+		}
+	}
+
+	for i := len(g.projectiles) - 1; i >= 0; i-- {
+		pr := g.projectiles[i]
+		pr.Update(g.stage)
+		if !pr.alive {
+			g.projectiles = append(g.projectiles[:i], g.projectiles[i+1:]...)
+			continue
+		}
+		if pr.Rect().overlaps(p.Rect()) {
 			g.die()
 			return
 		}
@@ -157,17 +195,23 @@ func (g *Game) updatePlaying() {
 		}
 	}
 
-	for i := len(g.oneUps) - 1; i >= 0; i-- {
-		o := g.oneUps[i]
-		o.Update(g.stage)
-		if !o.alive {
-			g.oneUps = append(g.oneUps[:i], g.oneUps[i+1:]...)
+	for i := len(g.dropItems) - 1; i >= 0; i-- {
+		d := g.dropItems[i]
+		d.Update(g.stage)
+		if !d.alive {
+			g.dropItems = append(g.dropItems[:i], g.dropItems[i+1:]...)
 			continue
 		}
-		if !o.emerging && o.Rect().overlaps(p.Rect()) {
-			g.lives++
-			g.floatTexts = append(g.floatTexts, newFloatText(o.x, o.y, "1UP"))
-			g.oneUps = append(g.oneUps[:i], g.oneUps[i+1:]...)
+		if !d.emerging && d.Rect().overlaps(p.Rect()) {
+			switch d.kind {
+			case dropOneUp:
+				g.lives++
+				g.floatTexts = append(g.floatTexts, newFloatText(d.x, d.y, "1UP"))
+				g.dropItems = append(g.dropItems[:i], g.dropItems[i+1:]...)
+			case dropPoison:
+				g.die()
+				return
+			}
 		}
 	}
 
@@ -181,6 +225,10 @@ func (g *Game) updatePlaying() {
 		footTx := int(math.Floor((p.x + playerW/2) / tileSize))
 		footTy := int(math.Floor((p.y + playerH) / tileSize))
 		if pp := g.stage.pipeEntranceAt(footTx, footTy); pp != nil {
+			if g.stageIdx == numStages-1 {
+				g.state = stateGameClear
+				return
+			}
 			g.loadStage(pp.nextStage)
 			return
 		}
@@ -201,17 +249,20 @@ func (g *Game) updatePlaying() {
 
 // onBlockHit is called when the player's head bumps into a tile from below.
 // A coin block credits the score immediately (per the "hit = get" design)
-// and just shows a cosmetic pop; a 1UP block releases a moving power-up that
-// must actually be touched to be collected.
+// and just shows a cosmetic pop; a 1UP or poison ("tabasco") block releases
+// a moving item that must actually be touched to take effect.
 func (g *Game) onBlockHit(tx, ty int) {
 	switch g.stage.tileAt(tx, ty) {
 	case tileBrick:
 		g.stage.setTile(tx, ty, tileEmpty)
 	case tileItem:
 		g.stage.setTile(tx, ty, tileUsed)
-		if g.stage.isOneUp(tx, ty) {
-			g.oneUps = append(g.oneUps, newOneUp(tx, ty))
-		} else {
+		switch {
+		case g.stage.isOneUp(tx, ty):
+			g.dropItems = append(g.dropItems, newDropItem(tx, ty, dropOneUp))
+		case g.stage.isPoison(tx, ty):
+			g.dropItems = append(g.dropItems, newDropItem(tx, ty, dropPoison))
+		default:
 			g.score += 100
 			g.coinPops = append(g.coinPops, newCoinPop(tx, ty))
 		}
@@ -280,10 +331,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		vector.FillCircle(screen, x, y, coinSize*0.28, color.RGBA{255, 240, 160, 255}, true)
 	}
 
-	for _, o := range g.oneUps {
-		x := float32(o.x) - float32(g.cameraX)
-		y := float32(o.y)
-		drawOneUp(screen, x, y)
+	for _, d := range g.dropItems {
+		x := float32(d.x) - float32(g.cameraX)
+		y := float32(d.y)
+		drawDropItem(screen, x, y, d.kind)
 	}
 
 	for _, f := range g.floatTexts {
@@ -301,13 +352,26 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 		x := float32(e.x) - float32(g.cameraX)
 		y := float32(e.y)
-		drawStickFigure(screen, x, y, enemyW, enemyH, e.vx > 0, color.RGBA{200, 40, 40, 255})
+		clr := color.RGBA{200, 40, 40, 255}
+		if e.kind == enemyThrower {
+			clr = color.RGBA{160, 30, 140, 255}
+		}
+		drawStickFigure(screen, x, y, enemyW, enemyH, e.vx > 0, clr)
+	}
+
+	for _, pr := range g.projectiles {
+		x := float32(pr.x) - float32(g.cameraX) + projectileW/2
+		y := float32(pr.y) + projectileH/2
+		vector.FillCircle(screen, x, y, projectileW/2, color.RGBA{230, 40, 30, 255}, true)
+		vector.StrokeCircle(screen, x, y, projectileW/2, 1, color.RGBA{120, 10, 10, 255}, true)
 	}
 
 	p := g.player
-	px := float32(p.x) - float32(g.cameraX)
-	py := float32(p.y)
-	drawStickFigure(screen, px, py, playerW, playerH, p.facingRight, color.RGBA{30, 60, 200, 255})
+	if g.state != stateGameOver {
+		px := float32(p.x) - float32(g.cameraX)
+		py := float32(p.y)
+		drawStickFigure(screen, px, py, playerW, playerH, p.facingRight, color.RGBA{30, 60, 200, 255})
+	}
 
 	g.drawHUD(screen)
 	g.drawTouchControls(screen)
@@ -316,20 +380,40 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if g.state == stateGameOver {
 		g.drawGameOver(screen)
 	}
+	if g.state == stateGameClear {
+		g.drawGameClear(screen)
+	}
+
+	// draw the death explosion above the game-over overlay so it stays visible
+	for _, pt := range g.particles {
+		x := float32(pt.x) - float32(g.cameraX)
+		y := float32(pt.y)
+		alpha := uint8(255 * (1 - float32(pt.age)/float32(pt.life)))
+		vector.FillCircle(screen, x, y, 2, color.RGBA{255, 140, 20, alpha}, true)
+	}
 }
 
-// drawOneUp renders the 1UP power-up as a small energy-drink can: a body,
-// a metallic cap, a stripe, and a lightning-bolt detail.
-func drawOneUp(screen *ebiten.Image, x, y float32) {
-	vector.FillRect(screen, x+1, y+3, oneUpSize-2, oneUpSize-3, color.RGBA{20, 130, 120, 255}, false)
-	vector.StrokeRect(screen, x+1, y+3, oneUpSize-2, oneUpSize-3, 1, color.RGBA{10, 80, 74, 255}, false)
-	vector.FillRect(screen, x+2, y, oneUpSize-4, 4, color.RGBA{210, 212, 220, 255}, false)
-	vector.FillRect(screen, x+1, y+7, oneUpSize-2, 2, color.RGBA{250, 180, 30, 255}, false)
+// drawDropItem renders a block-dropped item: the 1UP as a small energy-
+// drink can (body, metallic cap, stripe, lightning bolt), the poison as a
+// red "tabasco" bottle (body, dark cap, label band).
+func drawDropItem(screen *ebiten.Image, x, y float32, kind dropItemKind) {
+	switch kind {
+	case dropOneUp:
+		vector.FillRect(screen, x+1, y+3, dropItemSize-2, dropItemSize-3, color.RGBA{20, 130, 120, 255}, false)
+		vector.StrokeRect(screen, x+1, y+3, dropItemSize-2, dropItemSize-3, 1, color.RGBA{10, 80, 74, 255}, false)
+		vector.FillRect(screen, x+2, y, dropItemSize-4, 4, color.RGBA{210, 212, 220, 255}, false)
+		vector.FillRect(screen, x+1, y+7, dropItemSize-2, 2, color.RGBA{250, 180, 30, 255}, false)
 
-	boltClr := color.RGBA{255, 255, 255, 255}
-	mx := x + oneUpSize*0.5
-	vector.StrokeLine(screen, mx+2, y+4, mx-2, y+9, 1.2, boltClr, true)
-	vector.StrokeLine(screen, mx-2, y+9, mx+2, y+11, 1.2, boltClr, true)
+		boltClr := color.RGBA{255, 255, 255, 255}
+		mx := x + dropItemSize*0.5
+		vector.StrokeLine(screen, mx+2, y+4, mx-2, y+9, 1.2, boltClr, true)
+		vector.StrokeLine(screen, mx-2, y+9, mx+2, y+11, 1.2, boltClr, true)
+	case dropPoison:
+		vector.FillRect(screen, x+2, y+3, dropItemSize-4, dropItemSize-3, color.RGBA{190, 20, 20, 255}, false)
+		vector.StrokeRect(screen, x+2, y+3, dropItemSize-4, dropItemSize-3, 1, color.RGBA{110, 10, 10, 255}, false)
+		vector.FillRect(screen, x+3, y, dropItemSize-6, 4, color.RGBA{40, 40, 40, 255}, false)
+		vector.FillRect(screen, x+2, y+7, dropItemSize-4, 2, color.RGBA{250, 250, 240, 255}, false)
+	}
 }
 
 func (g *Game) drawStageBanner(screen *ebiten.Image) {
@@ -434,6 +518,28 @@ func (g *Game) drawGameOver(screen *ebiten.Image) {
 	opts2 := &text.DrawOptions{}
 	opts2.GeoM.Translate(screenWidth/2-float64(len(hint))*3.5, screenHeight/2+20)
 	text.Draw(screen, hint, g.face, opts2)
+}
+
+// drawGameClear shows a congratulations screen after the final stage's pipe
+// is entered, with the score reached, then restarts a fresh run on input.
+func (g *Game) drawGameClear(screen *ebiten.Image) {
+	vector.FillRect(screen, 0, 0, screenWidth, screenHeight, color.RGBA{20, 20, 60, 235}, false)
+
+	title := "GAME CLEAR!"
+	opts := &text.DrawOptions{}
+	opts.GeoM.Scale(2, 2)
+	opts.GeoM.Translate(screenWidth/2-float64(len(title))*7, screenHeight/2-30)
+	text.Draw(screen, title, g.face, opts)
+
+	score := fmt.Sprintf("FINAL SCORE %04d", g.score)
+	opts2 := &text.DrawOptions{}
+	opts2.GeoM.Translate(screenWidth/2-float64(len(score))*3.5, screenHeight/2+6)
+	text.Draw(screen, score, g.face, opts2)
+
+	hint := "PRESS JUMP TO PLAY AGAIN"
+	opts3 := &text.DrawOptions{}
+	opts3.GeoM.Translate(screenWidth/2-float64(len(hint))*3.5, screenHeight/2+24)
+	text.Draw(screen, hint, g.face, opts3)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {

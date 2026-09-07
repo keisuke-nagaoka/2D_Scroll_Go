@@ -1,17 +1,51 @@
 package main
 
-import "math"
+import (
+	"math"
+	"math/rand"
+)
 
-// Enemy is a simple patrol-and-fall enemy: it walks back and forth within a
-// fixed range around its spawn point (reversing at that range's edges or at
-// a wall), and falls under gravity, so it can walk off ledges into pits.
-// Touching the player ends the game (no stomp mechanic).
+// enemyKind selects an enemy's behavior; stages introduce these one at a
+// time so the pattern variety grows as the player progresses.
+type enemyKind int
+
+const (
+	enemyWalker  enemyKind = iota // stage 1-3: patrol left/right
+	enemyJumper                   // stage 4-6: patrol + periodic hop
+	enemyDropper                  // stage 7-9: falls from above, then patrols
+	enemyThrower                  // stage 10: patrol + periodically throws a projectile
+)
+
+// enemyKindForStage returns the enemy behavior introduced by the given
+// stage (0-based index), matching the requested progression.
+func enemyKindForStage(idx int) enemyKind {
+	switch {
+	case idx <= 2:
+		return enemyWalker
+	case idx <= 5:
+		return enemyJumper
+	case idx <= 8:
+		return enemyDropper
+	default:
+		return enemyThrower
+	}
+}
+
+// Enemy is a patrol-and-fall enemy: it walks back and forth within a fixed
+// range around its spawn point (reversing at that range's edges or at a
+// wall), and falls under gravity, so it can walk off ledges into pits.
+// Touching the player ends the game (no stomp mechanic). Depending on
+// kind, it may also hop (enemyJumper), start by free-falling from above
+// (enemyDropper), or periodically launch a projectile (enemyThrower).
 type Enemy struct {
+	kind         enemyKind
 	x, y, vx, vy float64
 	minX, maxX   float64
 	alive        bool
 	grounded     bool
-	walkPhase    float64
+	hasLanded    bool
+	jumpTimer    int
+	throwTimer   int
 }
 
 // patrolRadius keeps enemies from wandering across a whole stage once
@@ -19,23 +53,34 @@ type Enemy struct {
 // longer sit low enough to act as walls).
 const patrolRadius = 3 * tileSize
 
-func newEnemy(x, y float64) *Enemy {
-	return &Enemy{
-		x: x, y: y,
+func newEnemy(x, y float64, kind enemyKind) *Enemy {
+	e := &Enemy{
+		kind:  kind,
+		x:     x,
+		y:     y,
 		vx:    -enemySpeed,
 		minX:  x - patrolRadius,
 		maxX:  x + patrolRadius,
 		alive: true,
+
+		jumpTimer:  enemyJumpInterval,
+		throwTimer: enemyThrowInterval,
 	}
+	if kind == enemyDropper {
+		e.vx = 0 // stays put horizontally until it lands
+	}
+	return e
 }
 
 func (e *Enemy) Rect() rect {
 	return rect{e.x, e.y, enemyW, enemyH}
 }
 
-func (e *Enemy) Update(st *Stage) {
+// Update advances the enemy by one tick and returns a newly-launched
+// projectile, if this tick's behavior fired one (nil otherwise).
+func (e *Enemy) Update(st *Stage) *Projectile {
 	if !e.alive {
-		return
+		return nil
 	}
 
 	e.grounded = false
@@ -45,28 +90,31 @@ func (e *Enemy) Update(st *Stage) {
 		e.vy = maxFallSpeed
 	}
 
-	nextX := e.x + e.vx
-	var checkTx int
-	if e.vx < 0 {
-		checkTx = int(math.Floor(nextX / tileSize))
-	} else {
-		checkTx = int(math.Floor((nextX + enemyW - 1) / tileSize))
-	}
-	top := int(math.Floor(e.y / tileSize))
-	bottom := int(math.Floor((e.y + enemyH - 1) / tileSize))
-	blocked := nextX < e.minX || nextX > e.maxX
-	if !blocked {
-		for ty := top; ty <= bottom; ty++ {
-			if st.isSolid(checkTx, ty) {
-				blocked = true
-				break
+	// droppers don't move horizontally until they've hit the ground once
+	if e.kind != enemyDropper || e.hasLanded {
+		nextX := e.x + e.vx
+		var checkTx int
+		if e.vx < 0 {
+			checkTx = int(math.Floor(nextX / tileSize))
+		} else {
+			checkTx = int(math.Floor((nextX + enemyW - 1) / tileSize))
+		}
+		top := int(math.Floor(e.y / tileSize))
+		bottom := int(math.Floor((e.y + enemyH - 1) / tileSize))
+		blocked := nextX < e.minX || nextX > e.maxX
+		if !blocked {
+			for ty := top; ty <= bottom; ty++ {
+				if st.isSolid(checkTx, ty) {
+					blocked = true
+					break
+				}
 			}
 		}
-	}
-	if blocked {
-		e.vx = -e.vx
-	} else {
-		e.x = nextX
+		if blocked {
+			e.vx = -e.vx
+		} else {
+			e.x = nextX
+		}
 	}
 
 	e.y += e.vy
@@ -86,7 +134,102 @@ func (e *Enemy) Update(st *Stage) {
 
 	if e.y > float64(heightTiles*tileSize) {
 		e.alive = false
+		return nil
 	}
+
+	var spawned *Projectile
+	switch e.kind {
+	case enemyDropper:
+		if e.grounded && !e.hasLanded {
+			e.hasLanded = true
+			e.vx = -enemySpeed
+		}
+	case enemyJumper:
+		if e.grounded {
+			e.jumpTimer--
+			if e.jumpTimer <= 0 {
+				e.vy = enemyJumpVelocity
+				e.grounded = false
+				e.jumpTimer = enemyJumpInterval
+			}
+		}
+	case enemyThrower:
+		e.throwTimer--
+		if e.throwTimer <= 0 {
+			e.throwTimer = enemyThrowInterval
+			dir := 1.0
+			if e.vx < 0 {
+				dir = -1
+			}
+			spawned = newProjectile(e.x+enemyW/2, e.y+enemyH/2-projectileH/2, dir*projectileSpeed)
+		}
+	}
+	return spawned
+}
+
+// Projectile is a hazard thrown by an enemyThrower: it flies in a straight
+// line until it hits a wall or leaves the stage, and ends the game on
+// contact with the player.
+type Projectile struct {
+	x, y, vx float64
+	alive    bool
+}
+
+func newProjectile(x, y, vx float64) *Projectile {
+	return &Projectile{x: x, y: y, vx: vx, alive: true}
+}
+
+func (pr *Projectile) Rect() rect {
+	return rect{pr.x, pr.y, projectileW, projectileH}
+}
+
+func (pr *Projectile) Update(st *Stage) {
+	if !pr.alive {
+		return
+	}
+	nextX := pr.x + pr.vx
+	var tx int
+	if pr.vx < 0 {
+		tx = int(math.Floor(nextX / tileSize))
+	} else {
+		tx = int(math.Floor((nextX + projectileW - 1) / tileSize))
+	}
+	ty := int(math.Floor(pr.y / tileSize))
+	if st.isSolid(tx, ty) {
+		pr.alive = false
+		return
+	}
+	pr.x = nextX
+	if pr.x < -tileSize*4 || pr.x > st.widthPx()+tileSize*4 {
+		pr.alive = false
+	}
+}
+
+// Particle is a short-lived cosmetic speck used for the death explosion
+// effect; it has no gameplay effect.
+type Particle struct {
+	x, y, vx, vy float64
+	age, life    int
+}
+
+func newParticle(x, y float64) *Particle {
+	angle := rand.Float64() * 2 * math.Pi
+	speed := 1.2 + rand.Float64()*2.4
+	return &Particle{
+		x: x, y: y,
+		vx:   math.Cos(angle) * speed,
+		vy:   math.Sin(angle)*speed - 1.5,
+		life: 25 + rand.Intn(20),
+	}
+}
+
+// Update reports whether the particle is still alive (should keep being drawn).
+func (pt *Particle) Update() bool {
+	pt.vy += gravity * 0.4
+	pt.x += pt.vx
+	pt.y += pt.vy
+	pt.age++
+	return pt.age < pt.life
 }
 
 // CoinPop is a purely cosmetic effect shown when a coin block is hit; the
@@ -122,59 +265,71 @@ func (c *CoinPop) Update() bool {
 	return c.age < 20
 }
 
-// OneUp is a 1UP power-up: it emerges from its block, then walks along the
-// ground/platforms like the enemy (bouncing off walls, falling under
-// gravity, and off ledges into pits) until the player touches it.
-type OneUp struct {
+// dropItemKind distinguishes what a block-dropped, walking item does when
+// the player touches it.
+type dropItemKind int
+
+const (
+	dropOneUp  dropItemKind = iota // extra life
+	dropPoison                     // "tabasco" bottle: touching it ends the game
+)
+
+// DropItem is a walking power-up/hazard released from a block: it emerges
+// from the block, then walks along the ground/platforms like the enemy
+// (bouncing off walls, falling under gravity, and off ledges into pits)
+// until the player touches it.
+type DropItem struct {
+	kind         dropItemKind
 	x, y, vx, vy float64
 	emergeTarget float64
 	emerging     bool
 	alive        bool
 }
 
-func newOneUp(tileX, tileY int) *OneUp {
+func newDropItem(tileX, tileY int, kind dropItemKind) *DropItem {
 	spawnY := float64(tileY * tileSize)
-	return &OneUp{
-		x:            float64(tileX*tileSize) + (tileSize-oneUpSize)/2,
+	return &DropItem{
+		kind:         kind,
+		x:            float64(tileX*tileSize) + (tileSize-dropItemSize)/2,
 		y:            spawnY,
-		vx:           oneUpSpeed,
+		vx:           dropItemSpeed,
 		emergeTarget: spawnY - tileSize,
 		emerging:     true,
 		alive:        true,
 	}
 }
 
-func (o *OneUp) Rect() rect {
-	return rect{o.x, o.y, oneUpSize, oneUpSize}
+func (d *DropItem) Rect() rect {
+	return rect{d.x, d.y, dropItemSize, dropItemSize}
 }
 
-func (o *OneUp) Update(st *Stage) {
-	if !o.alive {
+func (d *DropItem) Update(st *Stage) {
+	if !d.alive {
 		return
 	}
-	if o.emerging {
-		o.y -= 1
-		if o.y <= o.emergeTarget {
-			o.y = o.emergeTarget
-			o.emerging = false
+	if d.emerging {
+		d.y -= 1
+		if d.y <= d.emergeTarget {
+			d.y = d.emergeTarget
+			d.emerging = false
 		}
 		return
 	}
 
-	o.vy += gravity
-	if o.vy > maxFallSpeed {
-		o.vy = maxFallSpeed
+	d.vy += gravity
+	if d.vy > maxFallSpeed {
+		d.vy = maxFallSpeed
 	}
 
-	nextX := o.x + o.vx
+	nextX := d.x + d.vx
 	var checkTx int
-	if o.vx < 0 {
+	if d.vx < 0 {
 		checkTx = int(math.Floor(nextX / tileSize))
 	} else {
-		checkTx = int(math.Floor((nextX + oneUpSize - 1) / tileSize))
+		checkTx = int(math.Floor((nextX + dropItemSize - 1) / tileSize))
 	}
-	top := int(math.Floor(o.y / tileSize))
-	bottom := int(math.Floor((o.y + oneUpSize - 1) / tileSize))
+	top := int(math.Floor(d.y / tileSize))
+	bottom := int(math.Floor((d.y + dropItemSize - 1) / tileSize))
 	blocked := false
 	for ty := top; ty <= bottom; ty++ {
 		if st.isSolid(checkTx, ty) {
@@ -183,27 +338,27 @@ func (o *OneUp) Update(st *Stage) {
 		}
 	}
 	if blocked {
-		o.vx = -o.vx
+		d.vx = -d.vx
 	} else {
-		o.x = nextX
+		d.x = nextX
 	}
 
-	o.y += o.vy
-	if o.vy >= 0 {
-		left := int(math.Floor(o.x / tileSize))
-		right := int(math.Floor((o.x + oneUpSize - 1) / tileSize))
-		by := int(math.Floor((o.y + oneUpSize - 1) / tileSize))
+	d.y += d.vy
+	if d.vy >= 0 {
+		left := int(math.Floor(d.x / tileSize))
+		right := int(math.Floor((d.x + dropItemSize - 1) / tileSize))
+		by := int(math.Floor((d.y + dropItemSize - 1) / tileSize))
 		for tx := left; tx <= right; tx++ {
 			if st.isSolid(tx, by) {
-				o.y = float64(by*tileSize) - oneUpSize
-				o.vy = 0
+				d.y = float64(by*tileSize) - dropItemSize
+				d.vy = 0
 				break
 			}
 		}
 	}
 
-	if o.y > float64(heightTiles*tileSize) {
-		o.alive = false
+	if d.y > float64(heightTiles*tileSize) {
+		d.alive = false
 	}
 }
 

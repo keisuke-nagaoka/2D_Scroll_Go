@@ -24,6 +24,12 @@ type pipeSpec struct {
 	nextStage        int
 }
 
+// enemySpawn is a tile-coordinate enemy placement tagged with its behavior.
+type enemySpawn struct {
+	x, y int
+	kind enemyKind
+}
+
 // stageSpec is the human-authored definition of a stage, expressed in tile
 // coordinates rather than raw ASCII art so it's easy to validate and extend.
 type stageSpec struct {
@@ -33,8 +39,9 @@ type stageSpec struct {
 	bricks      []point
 	items       []point
 	oneUpItems  []point // subset of items that drop a 1UP instead of a coin
+	poisonItems []point // subset of items that drop a poison ("tabasco") instead of a coin
 	walls       []point
-	enemies     []point
+	enemies     []enemySpawn
 	pipes       []pipeSpec
 	playerStart point
 }
@@ -48,9 +55,13 @@ type Stage struct {
 	tiles       [][]tile
 	widthTiles  int
 	playerStart struct{ x, y float64 }
-	enemySpawns []struct{ x, y float64 }
-	pipes       []pipe
-	oneUps      []point
+	enemySpawns []struct {
+		x, y float64
+		kind enemyKind
+	}
+	pipes   []pipe
+	oneUps  []point
+	poisons []point
 }
 
 func tileToPixel(p point) struct{ x, y float64 } {
@@ -103,6 +114,7 @@ func buildStage(spec stageSpec) *Stage {
 		tiles:      tiles,
 		widthTiles: spec.widthTiles,
 		oneUps:     spec.oneUpItems,
+		poisons:    spec.poisonItems,
 	}
 	st.playerStart = tileToPixel(spec.playerStart)
 	for _, ps := range spec.pipes {
@@ -114,8 +126,12 @@ func buildStage(spec stageSpec) *Stage {
 			nextStage:   ps.nextStage,
 		})
 	}
-	for _, p := range spec.enemies {
-		st.enemySpawns = append(st.enemySpawns, tileToPixel(p))
+	for _, sp := range spec.enemies {
+		px := tileToPixel(point{sp.x, sp.y})
+		st.enemySpawns = append(st.enemySpawns, struct {
+			x, y float64
+			kind enemyKind
+		}{px.x, px.y, sp.kind})
 	}
 	return st
 }
@@ -161,6 +177,15 @@ func (s *Stage) isOneUp(tx, ty int) bool {
 	return false
 }
 
+func (s *Stage) isPoison(tx, ty int) bool {
+	for _, p := range s.poisons {
+		if p.x == tx && p.y == ty {
+			return true
+		}
+	}
+	return false
+}
+
 // stageBuilder assembles a stageSpec out of fixed-width chunks so features
 // never overlap: each chunk owns an exclusive 10-tile slice of the stage,
 // and any pit/enemy/block within it is centered with ground to spare on
@@ -168,13 +193,14 @@ func (s *Stage) isOneUp(tx, ty int) bool {
 const chunkWidth = 10
 
 type stageBuilder struct {
-	pits       [][2]int
-	bricks     []point
-	items      []point
-	oneUpItems []point
-	walls      []point
-	enemies    []point
-	col        int
+	pits        [][2]int
+	bricks      []point
+	items       []point
+	oneUpItems  []point
+	poisonItems []point
+	walls       []point
+	enemies     []enemySpawn
+	col         int
 }
 
 func (b *stageBuilder) plain() {
@@ -187,13 +213,25 @@ func (b *stageBuilder) pit(width int) {
 	b.col += chunkWidth
 }
 
-func (b *stageBuilder) bricksAndItem(oneUp bool) {
+// itemKind selects what a bricksAndItem chunk's item block drops.
+type itemKind int
+
+const (
+	itemCoin itemKind = iota
+	itemOneUp
+	itemPoison
+)
+
+func (b *stageBuilder) bricksAndItem(kind itemKind) {
 	base := b.col + 2
 	b.bricks = append(b.bricks, point{base, 6}, point{base + 1, 6}, point{base + 2, 6})
 	item := point{base + 3, 6}
 	b.items = append(b.items, item)
-	if oneUp {
+	switch kind {
+	case itemOneUp:
 		b.oneUpItems = append(b.oneUpItems, item)
+	case itemPoison:
+		b.poisonItems = append(b.poisonItems, item)
 	}
 	b.col += chunkWidth
 }
@@ -204,8 +242,33 @@ func (b *stageBuilder) platform() {
 	b.col += chunkWidth
 }
 
-func (b *stageBuilder) enemy() {
-	b.enemies = append(b.enemies, point{b.col + 5, 9})
+func (b *stageBuilder) enemy(kind enemyKind) {
+	row := 9
+	if kind == enemyDropper {
+		row = -4 // starts off-screen above and falls in
+	}
+	b.enemies = append(b.enemies, enemySpawn{x: b.col + 5, y: row, kind: kind})
+	b.col += chunkWidth
+}
+
+// pipeGuard makes reaching the upcoming pipe harder as stages progress: a
+// wall to hop over, and (from stage4 onward) an enemy stationed right in
+// front of the pipe.
+func (b *stageBuilder) pipeGuard(idx int) {
+	wallHeight := 0
+	switch {
+	case idx >= 6:
+		wallHeight = 2
+	case idx >= 3:
+		wallHeight = 1
+	}
+	base := b.col + 4
+	for i := 0; i < wallHeight; i++ {
+		b.walls = append(b.walls, point{base, 9 - i})
+	}
+	if idx >= 3 {
+		b.enemies = append(b.enemies, enemySpawn{x: base + 2, y: 9, kind: enemyKindForStage(idx)})
+	}
 	b.col += chunkWidth
 }
 
@@ -218,6 +281,11 @@ func generateStage(idx int) stageSpec {
 
 	numChunks := 6 + idx
 	oneUpChunk := numChunks / 2
+	poisonChunk := numChunks / 4
+	if poisonChunk == oneUpChunk {
+		poisonChunk++
+	}
+	kind := enemyKindForStage(idx)
 
 	kinds := []string{"plain", "plain", "bricks", "platform"}
 	for e := 0; e <= idx/3; e++ {
@@ -228,17 +296,21 @@ func generateStage(idx int) stageSpec {
 	}
 
 	for i := 0; i < numChunks; i++ {
-		if i == oneUpChunk {
-			b.bricksAndItem(true)
+		switch {
+		case i == oneUpChunk:
+			b.bricksAndItem(itemOneUp)
+			continue
+		case i == poisonChunk:
+			b.bricksAndItem(itemPoison)
 			continue
 		}
 		switch kinds[rng.Intn(len(kinds))] {
 		case "plain":
 			b.plain()
 		case "bricks":
-			b.bricksAndItem(false)
+			b.bricksAndItem(itemCoin)
 		case "enemy":
-			b.enemy()
+			b.enemy(kind)
 		case "platform":
 			b.platform()
 		case "pit":
@@ -250,6 +322,7 @@ func generateStage(idx int) stageSpec {
 		}
 	}
 
+	b.pipeGuard(idx)
 	b.col += 2
 	pipeX := b.col
 	b.col += 2 + 3
@@ -261,6 +334,7 @@ func generateStage(idx int) stageSpec {
 		bricks:      b.bricks,
 		items:       b.items,
 		oneUpItems:  b.oneUpItems,
+		poisonItems: b.poisonItems,
 		walls:       b.walls,
 		enemies:     b.enemies,
 		pipes:       []pipeSpec{{x: pipeX, width: 2, height: 2, nextStage: (idx + 1) % numStages}},

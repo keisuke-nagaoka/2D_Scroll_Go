@@ -19,10 +19,20 @@ const (
 	enemyH     = 16
 	enemySpeed = 1.0
 
+	enemyJumpVelocity = -6.0
+	enemyJumpInterval = 80  // frames between hops for jumper enemies
+	enemyThrowInterval = 100 // frames between throws for thrower enemies
+
+	projectileW     = 8
+	projectileH     = 8
+	projectileSpeed = 1.6
+
 	coinSize = 8
 
-	oneUpSize  = 12
-	oneUpSpeed = 1.2
+	dropItemSize  = 12
+	dropItemSpeed = 1.2
+
+	particleCount = 16
 
 	startingLives = 2
 
