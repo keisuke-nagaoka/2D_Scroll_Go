@@ -7,6 +7,7 @@ Go言語アプリのローカル開発環境。本番 (https://go.keisuke-nagaok
 
 ```
 go_docker/
+├── .gitignore
 ├── compose.yml
 ├── docker/
 │   ├── go/
@@ -17,11 +18,13 @@ go_docker/
 │       └── server.key
 └── apps/
     └── go-game/
-        ├── .air.toml
+        ├── .air.toml         # air設定(wasmとサーバーをビルド)
         ├── go.mod
-        ├── main.go
-        ├── static/
+        ├── go.sum
+        ├── main.go           # HTTPサーバー
+        ├── static/           # CSS / ビルド済みwasm
         ├── templates/
+        ├── wasm/             # Ebitengineのゲーム本体(GOOS=js GOARCH=wasm)
         └── README.md
 ```
 
@@ -50,10 +53,14 @@ docker compose up -d
 1. `apps/go-game` をコピーして `apps/<新アプリ名>` を作成し、`go.mod` の `module` 名を変更する
 2. `compose.yml` にサービスを追加する (コメントアウトされている `go-app2` を参考にする)
    - `APP_BASE_PATH` は `/<新アプリ名>` にする
+   - `nginx` サービスの `depends_on` にも新サービスを追加する
 3. `docker/nginx/default.conf` に `upstream` と `location /<新アプリ名>/` ブロックを追加する
+   - `location` は HTTP(80) と HTTPS(443) の両方の `server` ブロックに追加する
+   - アプリはコンテナ内の `8080` 番ポートで待ち受ける前提
 4. `docker compose up -d --build` で反映する
 
 ## ホットリロード
 
 各Goコンテナは [air](https://github.com/air-verse/air) を使ってソース変更を検知し、
 自動で再ビルド・再起動する。設定は各アプリの `.air.toml` を参照。
+(`go-game` では wasm (`static/game.wasm`) とサーバー本体の両方をビルドする)
